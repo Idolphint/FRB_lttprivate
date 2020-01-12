@@ -61,6 +61,14 @@ class DeepLab(nn.Module):
                             yield p
 
 
+def getinput():
+   root_path = "../data20200111/"
+   img_path = "img/"
+   fea_path = "feature/"
+   label_path = "label/"
+
+
+
 if __name__ == "__main__":
     model = DeepLab(backbone='mobilenet', output_stride=16)
     model.eval()
