@@ -52,7 +52,7 @@ class ASPP(nn.Module):
         self.aspp3 = _ASPPModule(inplanes, 256, 3, padding=dilations[2], dilation=dilations[2], BatchNorm=BatchNorm)
         self.aspp4 = _ASPPModule(inplanes, 256, 3, padding=dilations[3], dilation=dilations[3], BatchNorm=BatchNorm)
 
-        self.global_avg_pool = nn.Sequential(nn.AdaptiveAvgPool3d((1, 1)),
+        self.global_avg_pool = nn.Sequential(nn.AdaptiveAvgPool3d((1, 1, 1)),
                                              nn.Conv3d(inplanes, 256, 1, stride=1, bias=False),
                                              BatchNorm(256),
                                              nn.ReLU())
@@ -68,7 +68,7 @@ class ASPP(nn.Module):
         x3 = self.aspp3(x)
         x4 = self.aspp4(x)
         x5 = self.global_avg_pool(x)
-        x5 = F.interpolate(x5, size=x4.size()[2:], mode='bilinear', align_corners=True)
+        x5 = F.interpolate(x5, size=x4.size()[2:], mode='trilinear', align_corners=True)
         x = torch.cat((x1, x2, x3, x4, x5), dim=1)
 
         x = self.conv1(x)

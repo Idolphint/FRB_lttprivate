@@ -18,7 +18,7 @@ def fixed_padding(inputs, kernel_size, dilation):
     pad_total = kernel_size_effective - 1
     pad_beg = pad_total // 2
     pad_end = pad_total - pad_beg
-    padded_inputs = F.pad(inputs, (pad_beg, pad_end, pad_beg, pad_end))
+    padded_inputs = F.pad(inputs, (pad_beg, pad_end, pad_beg, pad_end, pad_beg, pad_end))
     return padded_inputs
 
 
@@ -46,22 +46,26 @@ class InvertedResidual(nn.Module):
         else:
             self.conv = nn.Sequential(
                 # pw
-                nn.Conv3d(inp, hidden_dim, 1, 1, 1, 1, bias=False), #ori pad=0,the same as follow
+                nn.Conv3d(inp, hidden_dim, 1, 1, (0,0,0), 1, bias=False), #ori pad=0,the same as follow
                 BatchNorm(hidden_dim),
                 nn.ReLU6(inplace=True),
                 # dw
-                nn.Conv3d(hidden_dim, hidden_dim, 3, stride, 1, dilation, groups=hidden_dim, bias=False),
+                nn.Conv3d(hidden_dim, hidden_dim, 3, stride, (0,0,0), dilation, groups=hidden_dim, bias=False),
                 BatchNorm(hidden_dim),
                 nn.ReLU6(inplace=True),
                 # pw-linear
-                nn.Conv3d(hidden_dim, oup, 1, 1, 1, 1, bias=False),
+                nn.Conv3d(hidden_dim, oup, 1, 1, (0,0,0), 1, bias=False),
                 BatchNorm(oup),
             )
 
     def forward(self, x):
-        x_pad = fixed_padding(x, self.kernel_size, dilation=self.dilation)
+        print("before pad, x.shape ",x.shape)
+        x_pad = fixed_padding(x, self.kernel_size, dilation=self.dilation) #这里才是pad的关键部分其他都是0
+        print("after pad, ", x_pad.shape)
         if self.use_res_connect:
-            x = x + self.conv(x_pad)
+            con = self.conv(x_pad)
+            print("after con ",con.shape)
+            x = x + con
         else:
             x = self.conv(x_pad)
         return x

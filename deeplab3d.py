@@ -29,7 +29,7 @@ class DeepLab3d(nn.Module):
         x, low_level_feat = self.backbone(input)
         x = self.aspp(x)
         x = self.decoder(x, low_level_feat)
-        x = F.interpolate(x, size=input.size()[2:], mode='bilinear', align_corners=True) #TODO
+        x = F.interpolate(x, size=input.size()[2:], mode='trilinear', align_corners=True) #TODO
 
         return x
 
@@ -73,7 +73,7 @@ def getinput():
 if __name__ == "__main__":
     model = DeepLab3d(backbone='mobilenet', output_stride=16)
     model.eval()
-    input = torch.rand(1, 1, 50, 513, 513) #B, C, D, W, H
+    input = torch.rand(1, 1, 10, 51, 51) #B, C, D, W, H
     output = model(input)
     print(output.size())
 
