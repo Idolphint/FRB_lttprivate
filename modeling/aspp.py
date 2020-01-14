@@ -2,12 +2,12 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from modeling.sync_batchnorm.batchnorm import SynchronizedBatchNorm2d
+from modeling.sync_batchnorm.batchnorm import SynchronizedBatchNorm3d
 
 class _ASPPModule(nn.Module):
     def __init__(self, inplanes, planes, kernel_size, padding, dilation, BatchNorm):
         super(_ASPPModule, self).__init__()
-        self.atrous_conv = nn.Conv2d(inplanes, planes, kernel_size=kernel_size,
+        self.atrous_conv = nn.Conv3d(inplanes, planes, kernel_size=kernel_size,
                                             stride=1, padding=padding, dilation=dilation, bias=False)
         self.bn = BatchNorm(planes)
         self.relu = nn.ReLU()
@@ -22,12 +22,12 @@ class _ASPPModule(nn.Module):
 
     def _init_weight(self):
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, nn.Conv3d):
                 torch.nn.init.kaiming_normal_(m.weight)
-            elif isinstance(m, SynchronizedBatchNorm2d):
+            elif isinstance(m, SynchronizedBatchNorm3d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
-            elif isinstance(m, nn.BatchNorm2d):
+            elif isinstance(m, nn.BatchNorm3d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
@@ -52,11 +52,11 @@ class ASPP(nn.Module):
         self.aspp3 = _ASPPModule(inplanes, 256, 3, padding=dilations[2], dilation=dilations[2], BatchNorm=BatchNorm)
         self.aspp4 = _ASPPModule(inplanes, 256, 3, padding=dilations[3], dilation=dilations[3], BatchNorm=BatchNorm)
 
-        self.global_avg_pool = nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)),
-                                             nn.Conv2d(inplanes, 256, 1, stride=1, bias=False),
+        self.global_avg_pool = nn.Sequential(nn.AdaptiveAvgPool3d((1, 1)),
+                                             nn.Conv3d(inplanes, 256, 1, stride=1, bias=False),
                                              BatchNorm(256),
                                              nn.ReLU())
-        self.conv1 = nn.Conv2d(1280, 256, 1, bias=False)
+        self.conv1 = nn.Conv3d(1280, 256, 1, bias=False)
         self.bn1 = BatchNorm(256)
         self.relu = nn.ReLU()
         self.dropout = nn.Dropout(0.5)
@@ -79,14 +79,14 @@ class ASPP(nn.Module):
 
     def _init_weight(self):
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, nn.Conv3d):
                 # n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 # m.weight.data.normal_(0, math.sqrt(2. / n))
                 torch.nn.init.kaiming_normal_(m.weight)
-            elif isinstance(m, SynchronizedBatchNorm2d):
+            elif isinstance(m, SynchronizedBatchNorm3d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
-            elif isinstance(m, nn.BatchNorm2d):
+            elif isinstance(m, nn.BatchNorm3d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
