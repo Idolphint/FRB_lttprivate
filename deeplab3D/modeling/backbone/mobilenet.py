@@ -59,12 +59,9 @@ class InvertedResidual(nn.Module):
             )
 
     def forward(self, x):
-        print("before pad, x.shape ",x.shape)
         x_pad = fixed_padding(x, self.kernel_size, dilation=self.dilation) #这里才是pad的关键部分其他都是0
-        print("after pad, ", x_pad.shape)
         if self.use_res_connect:
             con = self.conv(x_pad)
-            print("after con ",con.shape)
             x = x + con
         else:
             x = self.conv(x_pad)
@@ -94,7 +91,6 @@ class MobileNetV2(nn.Module):
         # building first layer
         input_channel = int(input_channel * width_mult)
         self.features = [conv_bn(1, input_channel, 2, BatchNorm)] #input_channel成为输出层
-        print("first layer success")
         current_stride *= 2
         # building inverted residual blocks
         for t, c, n, s in interverted_residual_setting:
@@ -115,17 +111,15 @@ class MobileNetV2(nn.Module):
                 input_channel = output_channel
         self.features = nn.Sequential(*self.features)
         self._initialize_weights()
-        print("finish init")
         if pretrained:
             self._load_pretrained_model()
         self.low_level_features = self.features[0:4]
         self.high_level_features = self.features[4:]
 
     def forward(self, x):
-        x = torch.tensor(x, dtype=torch.float32)
-        print("before low features")
+        #x = torch.tensor(x, dtype=torch.float32)
+        x = x.float()
         low_level_feat = self.low_level_features(x)
-        print("after low feature")
         x = self.high_level_features(low_level_feat)
         return x, low_level_feat
 

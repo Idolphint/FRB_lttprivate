@@ -69,10 +69,7 @@ def getinput():
 
 
 
-<<<<<<< HEAD:deeplab2D/deeplab.py
-=======
 
->>>>>>> 2e6367fa695b51e87ccb7c7a81d2e8b5beed13be:deeplab3D/deeplab3d.py
 if __name__ == "__main__":
     model = DeepLab3d(backbone='mobilenet', output_stride=16)
     model.eval()

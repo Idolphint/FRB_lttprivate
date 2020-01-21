@@ -280,3 +280,12 @@ class SynchronizedBatchNorm3d(_SynchronizedBatchNorm):
             raise ValueError('expected 5D input (got {}D input)'
                              .format(input.dim()))
         super(SynchronizedBatchNorm3d, self)._check_input_dim(input)
+
+
+if __name__ == "__main__":
+        m = SynchronizedBatchNorm3d(250)
+        m = SynchronizedBatchNorm3d(250, affine=False)
+        input = torch.autograd.Variable(torch.randn(1, 20, 1, 45, 10))
+        output = m(input)
+        print(output.size)
+
