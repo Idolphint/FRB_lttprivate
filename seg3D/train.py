@@ -2,7 +2,7 @@
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from PIL import Image
-from deeplab3d import DeepLab3d
+from deeplab import DeepLab
 from utils.myDataSet import MyDataset,make_data_loader
 import torch
 #DATADIR = "../data20200111-img-label-fea/"
@@ -18,9 +18,9 @@ from tqdm import tqdm
 
 from modeling.sync_batchnorm.replicate import patch_replication_callback
 
-from deeplab3d import *
+from deeplab import *
 
-from utils.loss import DiceCELoss
+from utils.loss import SegmentationLosses
 
 from utils.calculate_weights import calculate_weigths_labels
 
@@ -33,7 +33,7 @@ from utils.summaries import TensorboardSummary
 from utils.metrics import Evaluator
 
 
-DEBUG=False
+
 backbone  = 'mobilenet'
 base_size = 384
 EPOCH = 10
@@ -51,16 +51,23 @@ class Trainer(object):
         self.saver = Saver(args)
         self.saver.save_experiment_config()
         # Define Tensorboard Summary
+        self.summary = TensorboardSummary(self.saver.experiment_dir)
+
+        self.writer = self.summary.create_summary()
+
+        
 
         # Define Dataloader
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        if DEBUG:
-            print("get device: ",self.device)
+
         kwargs = {'num_workers': args.workers, 'pin_memory': True}
+
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
+
+
+
         # Define network
 
-        model = DeepLab3d(num_classes=self.nclass,
+        model = DeepLab(num_classes=self.nclass,
                         backbone=args.backbone,
                         output_stride=args.out_stride,
                         sync_bn=args.sync_bn,
@@ -80,6 +87,7 @@ class Trainer(object):
 
             if os.path.isfile(classes_weights_path):
                 weight = np.load(classes_weights_path)
+
             else:
                 weight = calculate_weigths_labels(args.dataset, self.train_loader, self.nclass)
             weight = torch.from_numpy(weight.astype(np.float32)) ##########weight not cuda
@@ -87,7 +95,7 @@ class Trainer(object):
         else:
             weight = None
 
-        self.criterion = DiceCELoss()
+        self.criterion = SegmentationLosses(weight=weight, cuda=args.cuda).build_loss(mode=args.loss_type)
         self.model, self.optimizer = model, optimizer
 
         
@@ -107,37 +115,60 @@ class Trainer(object):
         # Using cuda
 
         if args.cuda:
+
             self.model = torch.nn.DataParallel(self.model, device_ids=self.args.gpu_ids)
+
             patch_replication_callback(self.model)
+
             self.model = self.model.cuda()
 
+
+
         # Resuming checkpoint
+
         self.best_pred = 0.0
+
         if args.resume is not None:
+
             if not os.path.isfile(args.resume):
+
                 raise RuntimeError("=> no checkpoint found at '{}'" .format(args.resume))
+
             checkpoint = torch.load(args.resume)
+
             args.start_epoch = checkpoint['epoch']
+
             if args.cuda:
+
                 self.model.module.load_state_dict(checkpoint['state_dict'])
+
             else:
+
                 self.model.load_state_dict(checkpoint['state_dict'])
+
             if not args.ft:
+
                 self.optimizer.load_state_dict(checkpoint['optimizer'])
+
             self.best_pred = checkpoint['best_pred']
+
             print("=> loaded checkpoint '{}' (epoch {})"
+
                   .format(args.resume, checkpoint['epoch']))
 
+
+
         # Clear start epoch if fine-tuning
+
         if args.ft:
+
             args.start_epoch = 0
+
+
 
     def training(self, epoch):
 
         train_loss = 0.0
-        dice_loss_count = 0.0
-        ce_loss_count = 0.0
-        num_count = 0
 
         self.model.train()
 
@@ -148,8 +179,6 @@ class Trainer(object):
         for i, sample in enumerate(tbar):
 
             image, target = sample
-            if DEBUG:
-                print("image, target size feed in model,", image.size(), target.size())
             if self.args.cuda:
                 image, target = image.cuda(), target.cuda()
 
@@ -157,27 +186,19 @@ class Trainer(object):
             self.optimizer.zero_grad()
 
             output = self.model(image)
-            if DEBUG:
-                print(output.size())
-            n,c,d,w,h = output.shape
-            output2 = torch.tensor( (np.zeros( (n,c,d,w,h) ) ).astype(np.float32) )
-            if(output.is_cuda==True):
-                output2 = output2.to(self.device)
-            for mk1 in range(0,n):
-                for mk2 in range(0,c): #对于每个n, c进行正则化
-                    output2[mk1,mk2,:,:,:] = ( output[mk1,mk2,:,:,:] - torch.min(output[mk1,mk2,:,:,:]) ) / ( torch.max( output[mk1,mk2,:,:,:] ) - torch.min(output[mk1,mk2,:,:,:]) )
-                
-            loss, dice_loss, ce_loss = self.criterion(output,output2, target,self.device)
+            loss = self.criterion(output, target)
 
             loss.backward()
 
             self.optimizer.step()
 
             train_loss += loss.item()
+
             tbar.set_description('Train loss: %.3f' % (train_loss / (i + 1)))
-            dice_loss_count = dice_loss_count + dice_loss.item()
-            ce_loss_count = ce_loss_count + ce_loss.item()
-            num_count = num_count + 1
+
+            self.writer.add_scalar('train/total_loss_iter', loss.item(), i + num_img_tr * epoch)
+
+
 
             # Show 10 * 3 inference results each epoch
 
@@ -185,13 +206,15 @@ class Trainer(object):
 
                 global_step = i + num_img_tr * epoch
 
+                self.summary.visualize_image(self.writer, self.args.dataset, image, target, output, global_step)
 
 
 
+        self.writer.add_scalar('train/total_loss_epoch', train_loss, epoch)
 
         print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
 
-        print('Loss: %.3f, dice loss: %.3f, ce loss: %.3f' % (train_loss, dice_loss_count/num_count, ce_loss_count/num_count))#maybe here is something wrong
+        print('Loss: %.3f' % train_loss)
 
 
 
@@ -226,9 +249,7 @@ class Trainer(object):
         tbar = tqdm(self.val_loader, desc='\r')
 
         test_loss = 0.0
-        dice_loss = 0.0
-        ce_loss = 0.0
-        num_count = 0
+
         for i, sample in enumerate(tbar):
             image, target = sample
             if self.args.cuda:
@@ -236,21 +257,10 @@ class Trainer(object):
 
             with torch.no_grad():
                 output = self.model(image)
-            n,c,d,w,h = output.shape
-            output2 = torch.tensor( (np.zeros( (n,c,d,w,h) ) ).astype(np.float32) )
-            if(output.is_cuda==True):
-                output2 = output2.to(self.device)
-            for mk1 in range(0,n):
-                for mk2 in range(0,c): #对于每个n, c进行正则化
-                    output2[mk1,mk2,:,:,:] = ( output[mk1,mk2,:,:,:] - torch.min(output[mk1,mk2,:,:,:]) ) / ( torch.max( output[mk1,mk2,:,:,:] ) - torch.min(output[mk1,mk2,:,:,:]) )
-                
 
-            loss, dice, ce = self.criterion(output, ioutput2, target, self.device)
+            loss = self.criterion(output, target)
             test_loss += loss.item()
-            dice_loss += dice.item()
-            ce_loss += ce.item()
-            num_count += 1
-            tbar.set_description('Test loss: %.3f, dice loss: %.3f, ce loss: %.3f' % (test_loss / (i + 1), dice_loss / num_count, ce_loss / num_count))
+            tbar.set_description('Test loss: %.3f' % (test_loss / (i + 1)))
             pred = output.data.cpu().numpy()
             target = target.cpu().numpy()
             
@@ -265,9 +275,22 @@ class Trainer(object):
         # Fast test during the training
 
         Acc = self.evaluator.Pixel_Accuracy()
+
         Acc_class = self.evaluator.Pixel_Accuracy_Class()
+
         mIoU = self.evaluator.Mean_Intersection_over_Union()
+
         FWIoU = self.evaluator.Frequency_Weighted_Intersection_over_Union()
+
+        self.writer.add_scalar('val/total_loss_epoch', test_loss, epoch)
+
+        self.writer.add_scalar('val/mIoU', mIoU, epoch)
+
+        self.writer.add_scalar('val/Acc', Acc, epoch)
+
+        self.writer.add_scalar('val/Acc_class', Acc_class, epoch)
+
+        self.writer.add_scalar('val/fwIoU', FWIoU, epoch)
 
         print('Validation:')
 
@@ -275,7 +298,7 @@ class Trainer(object):
 
         print("Acc:{}, Acc_class:{}, mIoU:{}, fwIoU: {}".format(Acc, Acc_class, mIoU, FWIoU))
 
-        print('Loss: %.3f' % test_loss, dice_loss, ce_loss)
+        print('Loss: %.3f' % test_loss)
 
 
 
@@ -325,8 +348,8 @@ def main():
                         help='whether to use sync bn (default: auto)')
     parser.add_argument('--freeze-bn', type=bool, default=False,
                         help='whether to freeze bn parameters (default: False)')
-    parser.add_argument('--loss-type', type=str, default='diceCe',
-                        choices=['ce', 'focal', 'log', 'dice', 'focal3d', 'ce3d', 'diceCe'],
+    parser.add_argument('--loss-type', type=str, default='focal',
+                        choices=['ce', 'focal'],
                         help='loss func type (default: ce)')
     # training hyper params
     parser.add_argument('--epochs', type=int, default=EPOCH, metavar='N',
@@ -426,11 +449,13 @@ def main():
     print('Starting Epoch:', trainer.args.start_epoch)
     print('Total Epoches:', trainer.args.epochs)
     for epoch in range(trainer.args.start_epoch, trainer.args.epochs):
-        print("----------------------------epoch, ", epoch)
+        print("epoch, ", epoch)
         trainer.training(epoch)
         if not trainer.args.no_val and epoch % args.eval_interval == (args.eval_interval - 1):
             trainer.validation(epoch)
+            print("ltt try validation")
 
+    trainer.writer.close()
 
 
 

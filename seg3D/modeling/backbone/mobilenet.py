@@ -89,7 +89,7 @@ class MobileNetV2(nn.Module):
 
         # building first layer
         input_channel = int(input_channel * width_mult)
-        self.features = [conv_bn(50, input_channel, 2, BatchNorm)] #input_channel成为输出层, 输入原本是1
+        self.features = [conv_bn(1, input_channel, 2, BatchNorm)] #input_channel成为输出层
         current_stride *= 2
         # building inverted residual blocks
         for t, c, n, s in interverted_residual_setting:
@@ -117,8 +117,7 @@ class MobileNetV2(nn.Module):
 
     def forward(self, x):
         
-        #x = torch.tensor(x, dtype=torch.float32).cuda()
-        x = x.float()
+        x = torch.tensor(x, dtype=torch.float32).cuda()
         low_level_feat = self.low_level_features(x)
         x = self.high_level_features(low_level_feat)
         return x, low_level_feat

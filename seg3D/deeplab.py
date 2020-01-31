@@ -6,8 +6,6 @@ from modeling.aspp import build_aspp
 from modeling.decoder import build_decoder
 from modeling.backbone import build_backbone
 
-DEBUG = False
-
 class DeepLab3d(nn.Module):
     def __init__(self, backbone='resnet', output_stride=16, num_classes=2,
                  sync_bn=True, freeze_bn=False):
@@ -31,8 +29,6 @@ class DeepLab3d(nn.Module):
         x, low_level_feat = self.backbone(input)
         x = self.aspp(x)
         x = self.decoder(x, low_level_feat)
-        if DEBUG:
-            print("deeplabv33d, after decoder before interpolate, x.shape: ",x.shape)
         x = F.interpolate(x, size=input.size()[2:], mode='trilinear', align_corners=True) #TODO
 
         return x
@@ -73,7 +69,10 @@ def getinput():
 
 
 
+<<<<<<< HEAD:deeplab2D/deeplab.py
+=======
 
+>>>>>>> 2e6367fa695b51e87ccb7c7a81d2e8b5beed13be:deeplab3D/deeplab3d.py
 if __name__ == "__main__":
     model = DeepLab3d(backbone='mobilenet', output_stride=16)
     model.eval()
