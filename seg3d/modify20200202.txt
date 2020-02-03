@@ -1,0 +1,7 @@
+修改了读入图片的方式，支持直接读取numpy数组
+vol_grid_io.py:
+    get_bounding_box...
+    load_nii2...
+
+修改了train的方式，使用了trainer, 即train3d.py文件
+主要不同是：取数据方式不同

@@ -1,9 +1,13 @@
-
+from BLstm import BiLSTM
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
+from torch.autograd import Variable
 from PIL import Image
 from deeplab3d import DeepLab3d
 from utils.myDataSet import MyDataset,make_data_loader
+from utility.vol_grid_io import serialize_single_vol_bbx, serialize_single_vol, deserialize_single_vol_bbx, \
+    get_bounding_box_loc, load_nii2grid, partition_vol2grid2seq, deserialize_cubearray2grid, \
+    deserialize_gridarray2vol
 import torch
 #DATADIR = "../data20200111-img-label-fea/"
 # 
@@ -44,6 +48,11 @@ weight_decay = 5e-4 #权重衰减率
 ROOT_PATH = "E:/FRB"
 
 CKPT_PATH = "ckpt"
+
+grid_D = 15  # 第一级分割大小
+grid_ita = 3
+cube_D = 7
+cube_ita = 2
 class Trainer(object):
     def __init__(self, args):
         self.args = args
@@ -57,59 +66,56 @@ class Trainer(object):
         if DEBUG:
             print("get device: ",self.device)
         kwargs = {'num_workers': args.workers, 'pin_memory': True}
-        self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
+        self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args)
         # Define network
 
-        model = DeepLab3d(num_classes=self.nclass,
+        modelDeeplab = DeepLab3d(num_classes=self.nclass,
                         backbone=args.backbone,
                         output_stride=args.out_stride,
                         sync_bn=args.sync_bn,
-                        freeze_bn=args.freeze_bn)
-
-        train_params = [{'params': model.get_1x_lr_params(), 'lr': args.lr},
-                        {'params': model.get_10x_lr_params(), 'lr': args.lr * 10}]
+                        freeze_bn=args.freeze_bn).cuda()
+        Bilstm = BiLSTM(cube_D*cube_D*cube_D*3, cube_D*cube_D*cube_D*3, 1).cuda()
+        train_params = [{'params': modelDeeplab.get_1x_lr_params(), 'lr': args.lr},
+                        {'params': modelDeeplab.get_10x_lr_params(), 'lr': args.lr * 10}]
 
         # Define Optimizer
-        optimizer = torch.optim.SGD(train_params, momentum=args.momentum,
+        optimizerSGD = torch.optim.SGD(train_params, momentum=args.momentum,
                                     weight_decay=args.weight_decay, nesterov=args.nesterov)
+        optimizerADAM = torch.optim.Adam(Bilstm.parameters())
         # Define Criterion
         # whether to use class balanced weights
 
-        if args.use_balanced_weights:
-            classes_weights_path = os.path.join(ROOT_PATH, args.dataset+'_classes_weights.npy')
+        #if args.use_balanced_weights:
+        #    classes_weights_path = os.path.join(ROOT_PATH, args.dataset+'_classes_weights.npy')
 
-            if os.path.isfile(classes_weights_path):
-                weight = np.load(classes_weights_path)
-            else:
-                weight = calculate_weigths_labels(args.dataset, self.train_loader, self.nclass)
-            weight = torch.from_numpy(weight.astype(np.float32)) ##########weight not cuda
+        #    if os.path.isfile(classes_weights_path):
+        #        weight = np.load(classes_weights_path)
+        #    else:
+        #        weight = calculate_weigths_labels(args.dataset, self.train_loader, self.nclass)
+        #    weight = torch.from_numpy(weight.astype(np.float32)) ##########weight not cuda
 
-        else:
-            weight = None
+        #else:
+        #    weight = None
 
-        self.criterion = DiceCELoss()
-        self.model, self.optimizer = model, optimizer
-
-        
+        self.deeplabCriterion = DiceCELoss().cuda()
+        self.lstmCost = torch.nn.BCELoss().cuda()
+        self.deeplab, self.Bilstm, self.optimizerSGD, self.optimizerADAM= modelDeeplab, Bilstm, optimizerSGD, optimizerADAM
 
         # Define Evaluator
-
         self.evaluator = Evaluator(self.nclass)
-
         # Define lr scheduler
 
         self.scheduler = LR_Scheduler(args.lr_scheduler, args.lr,
-
                                             args.epochs, len(self.train_loader))
 
 
 
         # Using cuda
 
-        if args.cuda:
-            self.model = torch.nn.DataParallel(self.model, device_ids=self.args.gpu_ids)
-            patch_replication_callback(self.model)
-            self.model = self.model.cuda()
+        #if args.cuda: --------注释掉不会有问题的吧
+        #    self.model = torch.nn.DataParallel(self.model, device_ids=self.args.gpu_ids)
+        #    patch_replication_callback(self.model)
+        #    self.model = self.model.cuda()
 
         # Resuming checkpoint
         self.best_pred = 0.0
@@ -119,9 +125,9 @@ class Trainer(object):
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
             if args.cuda:
-                self.model.module.load_state_dict(checkpoint['state_dict'])
+                self.deeplab.module.load_state_dict(checkpoint['state_dict'])
             else:
-                self.model.load_state_dict(checkpoint['state_dict'])
+                self.deeplab.load_state_dict(checkpoint['state_dict'])
             if not args.ft:
                 self.optimizer.load_state_dict(checkpoint['optimizer'])
             self.best_pred = checkpoint['best_pred']
@@ -139,25 +145,24 @@ class Trainer(object):
         ce_loss_count = 0.0
         num_count = 0
 
-        #self.model.train()
-        self.model.eval()
+        self.deeplab.eval()
 
         tbar = tqdm(self.train_loader)
 
         num_img_tr = len(self.train_loader)
 
         for i, sample in enumerate(tbar):
-
             image, target = sample
+            target_sque = target.squeeze() #期望得到没有 batch, channel的譬如50*384*384图像
+            img_sque = image.squeeze()
             if DEBUG:
-                print("image, target size feed in model,", image.size(), target.size())
-            if self.args.cuda:
-                image, target = image.cuda(), target.cuda()
+                print("image, target ,sque size feed in model,", image.size(), target.size(), target_sque.size())
+            image, target = image.cuda(), target.cuda()
 
-            self.scheduler(self.optimizer, i, epoch, self.best_pred)
-            self.optimizer.zero_grad()
+            self.scheduler(self.optimizerSGD, i, epoch, self.best_pred)
+            self.optimizerSGD.zero_grad()
 
-            output = self.model(image)
+            output = self.deeplab(image)
             if DEBUG:
                 print(output.size())
             n,c,d,w,h = output.shape
@@ -168,13 +173,53 @@ class Trainer(object):
                 for mk2 in range(0,c): #对于每个n, c进行正则化
                     output2[mk1,mk2,:,:,:] = ( output[mk1,mk2,:,:,:] - torch.min(output[mk1,mk2,:,:,:]) ) / ( torch.max( output[mk1,mk2,:,:,:] ) - torch.min(output[mk1,mk2,:,:,:]) )
                 
-            loss, dice_loss, ce_loss = self.criterion(output,output2, target,self.device)
+            loss, dice_loss, ce_loss = self.deeplabCriterion(output,output2, target,self.device)
 
             loss.backward()
 
-            self.optimizer.step()
+            self.optimizerSGD.step()
+            #####---------------------------------lstm part---------------------
+            aro = output2[0][0]
+            aro = aro.detach().cpu().numpy()
+            gro = output2[0][1]
+            gro = gro.detach().cpu().numpy()#要求batch必须是1
+            orig_vol_dim, bbx_loc = get_bounding_box_loc(img=target_sque, bbx_ext=10)
+            aux_grid_list = load_nii2grid(grid_D, grid_ita, bbx_loc=bbx_loc, img=target_sque)  #读取label, 
+            aux_grid_list_c0 = load_nii2grid(grid_D, grid_ita, img =gro,  bbx_loc=bbx_loc)  #ground
+            aux_grid_list_c1 = load_nii2grid(grid_D, grid_ita, img = aro, bbx_loc=bbx_loc)   #arotia
 
-            train_loss += loss.item()
+            us_grid_list = load_nii2grid(grid_D, grid_ita, img=img_sque, bbx_loc=bbx_loc)  #rawimage
+            label_grid_list = []
+            for g in range(len(us_grid_list)):
+                us_grid_vol = us_grid_list[g]   #rawimage
+
+                aux_grid_vol    = aux_grid_list[g]   #label
+                aux_grid_vol_c0 = aux_grid_list_c0[g]  #ground
+                aux_grid_vol_c1 = aux_grid_list_c1[g]   #arotia
+                # serialization grid to sequence
+                us_mat = partition_vol2grid2seq(us_grid_vol, cube_D, cube_ita, norm_fact=255.0)   #正则化rawimage并切分
+
+                aux_mat= partition_vol2grid2seq(aux_grid_vol, cube_D, cube_ita, norm_fact=1.0) #  label切分
+                aux_mat_c0 = partition_vol2grid2seq(aux_grid_vol_c0, cube_D, cube_ita, norm_fact=1.0)  #found切分
+                aux_mat_c1 = partition_vol2grid2seq(aux_grid_vol_c1, cube_D, cube_ita,
+                                                    norm_fact=1.0)  # arotia切分
+                feat_mat = np.concatenate((us_mat, aux_mat_c0, aux_mat_c1), axis=1)  #串联rawinage,ground,arotia
+                #print(feat_mat.shape)
+                feat_mat = torch.from_numpy(feat_mat) #转换为torchtensor
+                #feat_map=feat_mat.float()   #转换为float类型
+                feat_mat = feat_mat.unsqueeze(0)   #增加维度匹配LSTM的轮子
+                feat_mat = Variable(feat_mat).float().cuda()   #切换为float类型,也许可以试试double?
+                #feat_mat.unsqueeze(0)
+                y_label_seq = self.Bilstm(feat_mat)  #喂进网络
+                #print(y_label_seq.shape)
+                self.optimizerADAM.zero_grad()
+                aux_mat=torch.from_numpy(aux_mat)  #讲label换为tensor
+                aux_mat=aux_mat.float().cuda()    #label换为浮点型
+                lstmloss = self.lstmCost(y_label_seq, aux_mat)  #计算损失
+                lstmloss.backward()
+                self.optimizerADAM.step()
+            #######------------------------------------------------------------------------------
+            train_loss += loss.item() + lstmloss
             tbar.set_description('Train loss: %.3f' % (train_loss / (i + 1)))
             dice_loss_count = dice_loss_count + dice_loss.item()
             ce_loss_count = ce_loss_count + ce_loss.item()
@@ -206,10 +251,10 @@ class Trainer(object):
 
                 'epoch': epoch + 1,
 
-                'state_dict': self.model.module.state_dict(),
+                'state_dict': self.deeplab.module.state_dict(),
 
-                'optimizer': self.optimizer.state_dict(),
-
+                'optimizerSGD': self.optimizerSGD.state_dict(),
+                'optimizerADAM': self.optimizerADAM.state_dict(),
                 'best_pred': self.best_pred,
 
             }, is_best)
@@ -220,7 +265,7 @@ class Trainer(object):
 
     def validation(self, epoch):
 
-        self.model.eval()
+        self.deeplab.eval()
 
         self.evaluator.reset()
 
@@ -236,7 +281,7 @@ class Trainer(object):
                 image, target = image.cuda(), target.cuda()
 
             with torch.no_grad():
-                output = self.model(image)
+                output = self.deeplab(image)
             n,c,d,w,h = output.shape
             output2 = torch.tensor( (np.zeros( (n,c,d,w,h) ) ).astype(np.float32) )
             if(output.is_cuda==True):
@@ -246,7 +291,7 @@ class Trainer(object):
                     output2[mk1,mk2,:,:,:] = ( output[mk1,mk2,:,:,:] - torch.min(output[mk1,mk2,:,:,:]) ) / ( torch.max( output[mk1,mk2,:,:,:] ) - torch.min(output[mk1,mk2,:,:,:]) )
                 
 
-            loss, dice, ce = self.criterion(output, output2, target, self.device)
+            loss, dice, ce = self.criterion(output, ioutput2, target, self.device)
             test_loss += loss.item()
             dice_loss += dice.item()
             ce_loss += ce.item()
@@ -259,9 +304,7 @@ class Trainer(object):
             # Add batch sample into evaluator
 #            if self.args.cuda:
 #                target, pred = torch.from_numpy(target).cuda(), torch.from_numpy(pred).cuda()
-            if DEBUG:
-                print("check gt_image shape, pred img shape ",target.shape, pred.shape)
-            self.evaluator.add_batch(np.squeeze(target), np.squeeze(pred))
+            self.evaluator.add_batch(np.squeeze(target), pred)
 
 
 
@@ -294,7 +337,7 @@ class Trainer(object):
 
                 'epoch': epoch + 1,
 
-                'state_dict': self.model.module.state_dict(),
+                'state_dict': self.deeplab.module.state_dict(),
 
                 'optimizer': self.optimizer.state_dict(),
 
@@ -425,7 +468,7 @@ def main():
     trainer = Trainer(args)
     if args.train_from_begin == False:
         ckpt_name = open(os.path.join(trainer.saver.directory,"best_ckpt_num.txt")).readline()
-        trainer.model = trainer.model.load_state_dict(os.path.join(trainer.saver.directory, ckpt_name))
+        trainer.deeplab = trainer.deeplab.load_state_dict(os.path.join(trainer.saver.directory, ckpt_name))
     print('Starting Epoch:', trainer.args.start_epoch)
     print('Total Epoches:', trainer.args.epochs)
     for epoch in range(trainer.args.start_epoch, trainer.args.epochs):
@@ -444,6 +487,7 @@ if __name__ == "__main__":
 
 
 #for epoch in range(10):
+#        self.model.eval()
 #    print("epoch, ", epoch)
 #    for i, data in enumerate(data_loader):
 #        inputs, labels = data

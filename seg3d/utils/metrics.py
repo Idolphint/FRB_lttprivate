@@ -1,6 +1,5 @@
 import numpy as np
 
-DEBUG=False
 
 class Evaluator(object):
     def __init__(self, num_class):
@@ -12,9 +11,6 @@ class Evaluator(object):
         return Acc
 
     def Pixel_Accuracy_Class(self):
-        if DEBUG:
-            print("check confusion_mat is all zero: ",self.confusion_matrix.sum(axis=1))
-            print("disg, shape", np.diag(self.confusion_matrix).shape, self.confusion_matrix.shape)
         Acc = np.diag(self.confusion_matrix) / self.confusion_matrix.sum(axis=1)
         Acc = np.nanmean(Acc)
         return Acc
