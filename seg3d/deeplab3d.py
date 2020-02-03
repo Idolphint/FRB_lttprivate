@@ -5,7 +5,7 @@ from modeling.sync_batchnorm.batchnorm import SynchronizedBatchNorm3d
 from modeling.aspp import build_aspp
 from modeling.decoder import build_decoder
 from modeling.backbone import build_backbone
-from modeling.BLstm import bulid_bilstm
+
 DEBUG = False
 
 grid_D = 50

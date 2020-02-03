@@ -12,12 +12,10 @@ from torch.utils.data.sampler import RandomSampler
 import torch
 import numpy as np
 DEBUG=False
-
-DATADIR = "/home/idolphint/lttWorkSpace/FRB/5Ddata/"
+DATADIR = "E:/FRB/ALLdata/5Ddata/"
 classNUM = 15
 IMGLIST = "img"+str(classNUM)+"_list.txt"
 LABELLIST="label"+str(classNUM)+"_list.txt"
-
 class MyDataset(Dataset):
     def __init__(self, imgtxt, featxt, args, transform=None, target_transform=None,pin_memory=True):
         fh = open(imgtxt, 'r').readlines()
@@ -40,7 +38,14 @@ class MyDataset(Dataset):
         fn, label = self.imgs[index]
         img = np.load(DATADIR+fn)
         label = np.load(DATADIR+label)
-
+#        if classNUM ==2:
+#            label2 = np.zeros((classNUM, self.args.base_size, self.args.base_size))
+#            label2[0] = label
+#            label2[1] = np.where(label < 1, 1, 0)
+#            label = torch.from_numpy(label2)
+#        if self.transform is not None:
+#            img = self.transform(img)
+#            label = self.transform(label).transpose(3,4)
         img = torch.from_numpy(img)
         label = torch.from_numpy(label)
         img = torch.unsqueeze(img, 0)
@@ -58,7 +63,7 @@ def make_data_loader(args, **kwargs):
                          featxt=DATADIR+LABELLIST,
                          args = args,
                          transform=transforms.ToTensor())
-    validation_split = 0.2
+    validation_split = 0.1
     dataSetSize = len(dataSet)
     mid = int(dataSetSize*validation_split)
     val_indices, train_indices = list(range(0,mid)), list(range(mid,dataSetSize))
@@ -68,7 +73,7 @@ def make_data_loader(args, **kwargs):
 #        #a, b = obj['image'], obj['label']
 #        print(i.shape)
 #        print(obj.shape)
-    return train_loader, val_loader, None, 2
+    return train_loader, val_loader, None, classNUM
 
 if __name__ =="__main__":
     args=0

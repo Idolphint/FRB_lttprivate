@@ -1,9 +1,0 @@
-datset:heart_vessels
-backbone:mobilenet
-out_stride:16
-lr:0.0001
-lr_scheduler:poly
-loss_type:diceCe
-epoch:10
-base_size:384
-crop_size:384

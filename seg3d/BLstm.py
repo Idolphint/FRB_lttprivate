@@ -7,7 +7,7 @@ import random
 import torch.nn.init as init
 
 
-class cutcube():   #这个函数已经废弃了
+class cutcube():
     def __init__(self, input_x, cubesize=7, stride=2):
         self.input_x = input_x
         self.cubesize = cubesize
@@ -42,7 +42,7 @@ class cutcube():   #这个函数已经废弃了
         return output
 
 
-class cat:  #这个函数已经废弃
+class cat:
     def __init__(self, input_x, input_y,input_z):
         self.input_x = input_x
         self.input_y = input_y
@@ -86,10 +86,12 @@ class BiLSTM(nn.Module):
         bilstm_out = F.max_pool1d(bilstm_out, bilstm_out.size(2)).squeeze(2)
         y = self.squeeze(bilstm_out)
         y = self.squeeze2(y)
-        logit = F.sigmoid(y)   #上次在群里吐槽过，直接暴力j将sigmoid视为概率了
+        logit = F.sigmoid(y)
         return logit
 
-
+def bulid_bilstm(input_size, hidden_size, num_layers, bias=False, batch_first=True, dropout=0,
+        bidirectional=True):
+    return BiLSTM(input_size, hidden_size, num_layers, bias, batch_first, dropout, bidirectional).cuda()
 if __name__ == "__main__":
     testx = torch.rand((50, 50, 50))
     cutc = cutcube(testx, 7, 6)
